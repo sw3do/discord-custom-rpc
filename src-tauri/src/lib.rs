@@ -1,11 +1,11 @@
-use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
-use discord_rich_presence::{DiscordIpc, DiscordIpcClient};
+use base64::{engine::general_purpose, Engine as _};
 use discord_rich_presence::activity::{Activity, Assets, Button, Timestamps};
+use discord_rich_presence::{DiscordIpc, DiscordIpcClient};
+use image::ImageFormat;
 use reqwest::multipart;
-use base64::{Engine as _, engine::general_purpose};
-use image::{ImageFormat, DynamicImage};
+use serde::{Deserialize, Serialize};
 use std::io::Cursor;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityData {
@@ -51,16 +51,17 @@ async fn connect_discord_rpc(client_id: String) -> Result<String, String> {
     if client_id.trim().is_empty() {
         return Err("Client ID cannot be empty".to_string());
     }
-    
+
     let mut client = DiscordIpcClient::new(&client_id)
-        .map_err(|e| format!("Failed to create Discord IPC client: {}", e))?;
-    
-    client.connect()
-        .map_err(|e| format!("Failed to connect to Discord: {}. Make sure Discord is running.", e))?;
-    
+        .map_err(|e| format!("Failed to create Discord IPC client: {e}"))?;
+
+    client
+        .connect()
+        .map_err(|e| format!("Failed to connect to Discord: {e}. Make sure Discord is running."))?;
+
     let connection = get_rpc_connection();
     *connection.lock().unwrap() = Some(client);
-    
+
     Ok("Successfully connected to Discord RPC".to_string())
 }
 
@@ -68,20 +69,21 @@ async fn connect_discord_rpc(client_id: String) -> Result<String, String> {
 async fn set_activity(activity: ActivityData) -> Result<String, String> {
     let connection = get_rpc_connection();
     let mut conn_guard = connection.lock().unwrap();
-    
-    let client = conn_guard.as_mut()
+
+    let client = conn_guard
+        .as_mut()
         .ok_or("Not connected to Discord RPC. Please connect first.")?;
-    
+
     let mut discord_activity = Activity::new();
-    
+
     if let Some(ref details) = activity.details {
         discord_activity = discord_activity.details(details);
     }
-    
+
     if let Some(ref state) = activity.state {
         discord_activity = discord_activity.state(state);
     }
-    
+
     if let Some(timestamps) = activity.timestamps {
         let mut ts = Timestamps::new();
         if let Some(start) = timestamps.start {
@@ -92,7 +94,7 @@ async fn set_activity(activity: ActivityData) -> Result<String, String> {
         }
         discord_activity = discord_activity.timestamps(ts);
     }
-    
+
     if let Some(ref assets) = activity.assets {
         let mut discord_assets = Assets::new();
         if let Some(ref large_image) = assets.large_image {
@@ -109,17 +111,19 @@ async fn set_activity(activity: ActivityData) -> Result<String, String> {
         }
         discord_activity = discord_activity.assets(discord_assets);
     }
-    
+
     if let Some(ref buttons) = activity.buttons {
-        let discord_buttons: Vec<Button> = buttons.iter()
+        let discord_buttons: Vec<Button> = buttons
+            .iter()
             .map(|b| Button::new(&b.label, &b.url))
             .collect();
         discord_activity = discord_activity.buttons(discord_buttons);
     }
-    
-    client.set_activity(discord_activity)
-        .map_err(|e| format!("Failed to set activity: {}", e))?;
-    
+
+    client
+        .set_activity(discord_activity)
+        .map_err(|e| format!("Failed to set activity: {e}"))?;
+
     Ok("Activity set successfully".to_string())
 }
 
@@ -127,13 +131,15 @@ async fn set_activity(activity: ActivityData) -> Result<String, String> {
 async fn clear_activity() -> Result<String, String> {
     let connection = get_rpc_connection();
     let mut conn_guard = connection.lock().unwrap();
-    
-    let client = conn_guard.as_mut()
+
+    let client = conn_guard
+        .as_mut()
         .ok_or("Not connected to Discord RPC. Please connect first.")?;
-    
-    client.clear_activity()
-        .map_err(|e| format!("Failed to clear activity: {}", e))?;
-    
+
+    client
+        .clear_activity()
+        .map_err(|e| format!("Failed to clear activity: {e}"))?;
+
     Ok("Activity cleared successfully".to_string())
 }
 
@@ -141,10 +147,11 @@ async fn clear_activity() -> Result<String, String> {
 async fn disconnect_discord_rpc() -> Result<String, String> {
     let connection = get_rpc_connection();
     let mut conn_guard = connection.lock().unwrap();
-    
+
     if let Some(mut client) = conn_guard.take() {
-        client.close()
-            .map_err(|e| format!("Failed to disconnect: {}", e))?;
+        client
+            .close()
+            .map_err(|e| format!("Failed to disconnect: {e}"))?;
         Ok("Disconnected from Discord RPC".to_string())
     } else {
         Ok("Already disconnected".to_string())
@@ -162,42 +169,47 @@ async fn get_connection_status() -> Result<bool, String> {
 async fn upload_image_to_api(image_data: String) -> Result<String, String> {
     let image_bytes = general_purpose::STANDARD
         .decode(image_data.split(',').nth(1).unwrap_or(&image_data))
-        .map_err(|e| format!("Failed to decode base64: {}", e))?;
-    
-    let img = image::load_from_memory(&image_bytes)
-        .map_err(|e| format!("Failed to load image: {}", e))?;
-    
+        .map_err(|e| format!("Failed to decode base64: {e}"))?;
+
+    let img =
+        image::load_from_memory(&image_bytes).map_err(|e| format!("Failed to load image: {e}"))?;
+
     let resized_img = img.resize_exact(512, 512, image::imageops::FilterType::Lanczos3);
-    
+
     let mut buffer = Vec::new();
     let mut cursor = Cursor::new(&mut buffer);
-    resized_img.write_to(&mut cursor, ImageFormat::Png)
-        .map_err(|e| format!("Failed to encode image: {}", e))?;
-    
+    resized_img
+        .write_to(&mut cursor, ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode image: {e}"))?;
+
     let client = reqwest::Client::new();
-    let form = multipart::Form::new()
-        .part("file", multipart::Part::bytes(buffer)
+    let form = multipart::Form::new().part(
+        "file",
+        multipart::Part::bytes(buffer)
             .file_name("discord_image.png")
             .mime_str("image/png")
-            .map_err(|e| format!("Failed to set mime type: {}", e))?);
-    
+            .map_err(|e| format!("Failed to set mime type: {e}"))?,
+    );
+
     let response = client
         .post("https://tmpfiles.org/api/v1/upload")
         .multipart(form)
         .send()
         .await
-        .map_err(|e| format!("Failed to upload image: {}", e))?;
-    
+        .map_err(|e| format!("Failed to upload image: {e}"))?;
+
     if !response.status().is_success() {
         return Err(format!("Upload failed with status: {}", response.status()));
     }
-    
-    let response_text = response.text().await
-        .map_err(|e| format!("Failed to read response: {}", e))?;
-    
-    let json: serde_json::Value = serde_json::from_str(&response_text)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
-    
+
+    let response_text = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {e}"))?;
+
+    let json: serde_json::Value =
+        serde_json::from_str(&response_text).map_err(|e| format!("Failed to parse JSON: {e}"))?;
+
     if let Some(data) = json.get("data") {
         if let Some(url) = data.get("url").and_then(|u| u.as_str()) {
             let direct_url = if url.starts_with("https://tmpfiles.org/") {
@@ -210,7 +222,7 @@ async fn upload_image_to_api(image_data: String) -> Result<String, String> {
             return Ok(direct_url);
         }
     }
-    
+
     Err("Failed to extract URL from response".to_string())
 }
 
@@ -218,20 +230,21 @@ async fn upload_image_to_api(image_data: String) -> Result<String, String> {
 async fn resize_image_for_discord(image_data: String) -> Result<String, String> {
     let image_bytes = general_purpose::STANDARD
         .decode(image_data.split(',').nth(1).unwrap_or(&image_data))
-        .map_err(|e| format!("Failed to decode base64: {}", e))?;
-    
-    let img = image::load_from_memory(&image_bytes)
-        .map_err(|e| format!("Failed to load image: {}", e))?;
-    
+        .map_err(|e| format!("Failed to decode base64: {e}"))?;
+
+    let img =
+        image::load_from_memory(&image_bytes).map_err(|e| format!("Failed to load image: {e}"))?;
+
     let resized_img = img.resize_exact(512, 512, image::imageops::FilterType::Lanczos3);
-    
+
     let mut buffer = Vec::new();
     let mut cursor = Cursor::new(&mut buffer);
-    resized_img.write_to(&mut cursor, ImageFormat::Png)
-        .map_err(|e| format!("Failed to encode image: {}", e))?;
-    
+    resized_img
+        .write_to(&mut cursor, ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode image: {e}"))?;
+
     let base64_string = general_purpose::STANDARD.encode(&buffer);
-    Ok(format!("data:image/png;base64,{}", base64_string))
+    Ok(format!("data:image/png;base64,{base64_string}"))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
