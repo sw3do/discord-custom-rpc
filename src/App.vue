@@ -44,6 +44,65 @@ const activity = reactive<ActivityData>({
   buttons: []
 });
 
+const isUploading = ref(false);
+const uploadProgress = ref('');
+
+const uploadImage = async (file: File, imageType: 'large' | 'small') => {
+  if (!file) return;
+  
+  isUploading.value = true;
+  uploadProgress.value = 'Resizing image...';
+  
+  try {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const base64Data = e.target?.result as string;
+        
+        uploadProgress.value = 'Uploading to server...';
+        const imageUrl = await invoke<string>('upload_image_to_api', {
+          imageData: base64Data
+        });
+        
+        if (imageType === 'large') {
+          activity.assets!.large_image = imageUrl;
+        } else {
+          activity.assets!.small_image = imageUrl;
+        }
+        
+        uploadProgress.value = 'Upload completed!';
+        setTimeout(() => {
+          uploadProgress.value = '';
+          isUploading.value = false;
+        }, 2000);
+      } catch (error) {
+        console.error('Upload failed:', error);
+        uploadProgress.value = 'Upload failed: ' + error;
+        setTimeout(() => {
+          uploadProgress.value = '';
+          isUploading.value = false;
+        }, 3000);
+      }
+    };
+    reader.readAsDataURL(file);
+  } catch (error) {
+    console.error('File read failed:', error);
+    uploadProgress.value = 'File read failed';
+    setTimeout(() => {
+      uploadProgress.value = '';
+      isUploading.value = false;
+    }, 3000);
+  }
+};
+
+const handleImageUpload = (event: Event, imageType: 'large' | 'small') => {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+  if (file) {
+    uploadImage(file, imageType);
+  }
+};
+
 const translations = {
   en: {
     title: 'Discord Custom RPC',
@@ -61,12 +120,17 @@ const translations = {
     statePlaceholder: 'Additional info',
     largeImage: 'Large Image',
     largeImagePlaceholder: 'Image key or URL',
+    uploadLargeImage: 'Upload Large Image',
     largeText: 'Large Image Text',
     largeTextPlaceholder: 'Text when hovering large image',
     smallImage: 'Small Image',
     smallImagePlaceholder: 'Small image key or URL',
+    uploadSmallImage: 'Upload Small Image',
     smallText: 'Small Image Text',
     smallTextPlaceholder: 'Text when hovering small image',
+    uploadProgress: 'Upload Progress',
+    selectImage: 'Select Image File',
+    imageWillBeResized: 'Image will be automatically resized to 512x512 for Discord',
     startTime: 'Start Time',
     endTime: 'End Time',
     now: 'Now',
@@ -98,12 +162,17 @@ const translations = {
     statePlaceholder: 'Ek bilgi',
     largeImage: 'Büyük Resim',
     largeImagePlaceholder: 'Resim anahtarı veya URL',
+    uploadLargeImage: 'Büyük Resim Yükle',
     largeText: 'Büyük Resim Metni',
     largeTextPlaceholder: 'Büyük resmin üzerine gelindiğinde gösterilecek metin',
     smallImage: 'Küçük Resim',
     smallImagePlaceholder: 'Küçük resim anahtarı veya URL',
+    uploadSmallImage: 'Küçük Resim Yükle',
     smallText: 'Küçük Resim Metni',
     smallTextPlaceholder: 'Küçük resmin üzerine gelindiğinde gösterilecek metin',
+    uploadProgress: 'Yükleme Durumu',
+    selectImage: 'Resim Dosyası Seç',
+    imageWillBeResized: 'Resim Discord için otomatik olarak 512x512 boyutuna getirilecek',
     startTime: 'Başlangıç Zamanı',
     endTime: 'Bitiş Zamanı',
     now: 'Şimdi',
@@ -386,12 +455,31 @@ onMounted(() => {
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label class="block text-sm font-medium text-gray-300 mb-2">{{ t.largeImage }}</label>
-                <input 
-                  v-model="activity.assets!.large_image" 
-                  type="text" 
-                  :placeholder="t.largeImagePlaceholder"
-                  class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                />
+                <div class="space-y-2">
+                  <input 
+                    v-model="activity.assets!.large_image" 
+                    type="text" 
+                    :placeholder="t.largeImagePlaceholder"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <div class="flex gap-2">
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      @change="handleImageUpload($event, 'large')"
+                      class="hidden"
+                      id="large-image-upload"
+                    />
+                    <label 
+                      for="large-image-upload" 
+                      class="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white text-sm font-medium py-1 px-3 rounded cursor-pointer text-center transition-colors"
+                      :class="{ 'opacity-50 cursor-not-allowed': isUploading }"
+                    >
+                      {{ t.uploadLargeImage }}
+                    </label>
+                  </div>
+                  <p class="text-xs text-gray-400">{{ t.imageWillBeResized }}</p>
+                </div>
               </div>
               
               <div>
@@ -408,12 +496,31 @@ onMounted(() => {
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label class="block text-sm font-medium text-gray-300 mb-2">{{ t.smallImage }}</label>
-                <input 
-                  v-model="activity.assets!.small_image" 
-                  type="text" 
-                  :placeholder="t.smallImagePlaceholder"
-                  class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
-                />
+                <div class="space-y-2">
+                  <input 
+                    v-model="activity.assets!.small_image" 
+                    type="text" 
+                    :placeholder="t.smallImagePlaceholder"
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  />
+                  <div class="flex gap-2">
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      @change="handleImageUpload($event, 'small')"
+                      class="hidden"
+                      id="small-image-upload"
+                    />
+                    <label 
+                      for="small-image-upload" 
+                      class="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white text-sm font-medium py-1 px-3 rounded cursor-pointer text-center transition-colors"
+                      :class="{ 'opacity-50 cursor-not-allowed': isUploading }"
+                    >
+                      {{ t.uploadSmallImage }}
+                    </label>
+                  </div>
+                  <p class="text-xs text-gray-400">{{ t.imageWillBeResized }}</p>
+                </div>
               </div>
               
               <div>
@@ -463,6 +570,13 @@ onMounted(() => {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+          
+          <div v-if="isUploading" class="mt-4 p-4 bg-blue-900 border border-blue-700 rounded-lg">
+            <div class="flex items-center space-x-3">
+              <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
+              <span class="text-blue-300">{{ t.uploadProgress }}</span>
             </div>
           </div>
         </div>

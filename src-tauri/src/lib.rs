@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient};
 use discord_rich_presence::activity::{Activity, Assets, Button, Timestamps};
+use reqwest::multipart;
+use base64::{Engine as _, engine::general_purpose};
+use image::{ImageFormat, DynamicImage};
+use std::io::Cursor;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityData {
@@ -154,6 +158,82 @@ async fn get_connection_status() -> Result<bool, String> {
     Ok(conn_guard.is_some())
 }
 
+#[tauri::command]
+async fn upload_image_to_api(image_data: String) -> Result<String, String> {
+    let image_bytes = general_purpose::STANDARD
+        .decode(image_data.split(',').nth(1).unwrap_or(&image_data))
+        .map_err(|e| format!("Failed to decode base64: {}", e))?;
+    
+    let img = image::load_from_memory(&image_bytes)
+        .map_err(|e| format!("Failed to load image: {}", e))?;
+    
+    let resized_img = img.resize_exact(512, 512, image::imageops::FilterType::Lanczos3);
+    
+    let mut buffer = Vec::new();
+    let mut cursor = Cursor::new(&mut buffer);
+    resized_img.write_to(&mut cursor, ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode image: {}", e))?;
+    
+    let client = reqwest::Client::new();
+    let form = multipart::Form::new()
+        .part("file", multipart::Part::bytes(buffer)
+            .file_name("discord_image.png")
+            .mime_str("image/png")
+            .map_err(|e| format!("Failed to set mime type: {}", e))?);
+    
+    let response = client
+        .post("https://tmpfiles.org/api/v1/upload")
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to upload image: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Upload failed with status: {}", response.status()));
+    }
+    
+    let response_text = response.text().await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+    
+    let json: serde_json::Value = serde_json::from_str(&response_text)
+        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+    
+    if let Some(data) = json.get("data") {
+        if let Some(url) = data.get("url").and_then(|u| u.as_str()) {
+            let direct_url = if url.starts_with("https://tmpfiles.org/") {
+                url.replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/")
+            } else if url.starts_with("http://tmpfiles.org/") {
+                url.replace("http://tmpfiles.org/", "http://tmpfiles.org/dl/")
+            } else {
+                url.to_string()
+            };
+            return Ok(direct_url);
+        }
+    }
+    
+    Err("Failed to extract URL from response".to_string())
+}
+
+#[tauri::command]
+async fn resize_image_for_discord(image_data: String) -> Result<String, String> {
+    let image_bytes = general_purpose::STANDARD
+        .decode(image_data.split(',').nth(1).unwrap_or(&image_data))
+        .map_err(|e| format!("Failed to decode base64: {}", e))?;
+    
+    let img = image::load_from_memory(&image_bytes)
+        .map_err(|e| format!("Failed to load image: {}", e))?;
+    
+    let resized_img = img.resize_exact(512, 512, image::imageops::FilterType::Lanczos3);
+    
+    let mut buffer = Vec::new();
+    let mut cursor = Cursor::new(&mut buffer);
+    resized_img.write_to(&mut cursor, ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode image: {}", e))?;
+    
+    let base64_string = general_purpose::STANDARD.encode(&buffer);
+    Ok(format!("data:image/png;base64,{}", base64_string))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -163,7 +243,9 @@ pub fn run() {
             set_activity,
             clear_activity,
             disconnect_discord_rpc,
-            get_connection_status
+            get_connection_status,
+            upload_image_to_api,
+            resize_image_for_discord
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
